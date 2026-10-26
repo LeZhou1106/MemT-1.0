@@ -74,7 +74,6 @@ class MemoryRuntime:
                 group = prepare_group(
                     self.plan,
                     self.worker_sessions,
-                    self.pool.storage[layer].shape[0],
                     hidden.device,
                     commit=commit,
                     slot_read=self.slot_read,

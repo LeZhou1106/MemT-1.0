@@ -15,9 +15,7 @@ class PreparedGroup:
     token_count: int
 
 
-def prepare_group(
-    plan, sessions, capacity, device, *, commit, slot_read, contiguous_reads=True
-):
+def prepare_group(plan, sessions, device, *, commit, slot_read, contiguous_reads=True):
     samples = tuple(
         sample
         for sample in plan.samples

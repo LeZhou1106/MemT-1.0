@@ -73,7 +73,7 @@ sh start_memt_flash.sh /models/MemT-1.0-Flash \
 | MoE / sampling backend | Triton / PyTorch | Triton / PyTorch |
 | Retained streaming sessions | Disabled | Enabled |
 
-Both scripts use explicit memory/KV budgets for single-node BF16 serving. Per-forward metadata caching across memory layers is enabled by default. Slot reads and prefill/decode CUDA Graph replay are enabled explicitly with the environment variables below; incompatible graph shapes fall back to eager execution. These values are examples, not fixed parallelism requirements; extra native SGLang arguments override script values subject to the startup checks below.
+Both scripts use explicit memory/KV budgets for single-node BF16 serving. Per-forward metadata caching across memory layers is enabled by default. Nano slot reads also reuse immutable query plans on the same CUDA stream; live state-slot IDs remain per-forward. Slot reads and prefill/decode CUDA Graph replay are enabled explicitly with the environment variables below; incompatible graph shapes fall back to eager execution. These values are examples, not fixed parallelism requirements; extra native SGLang arguments override script values subject to the startup checks below.
 
 ### Launcher arguments
 
@@ -98,7 +98,7 @@ python -m memt_sglang.launch --model-path /models/MemT-1.0-Nano --dry-run
 
 Dry-run does not validate SGLang arguments. Normal startup validates the actual `ServerArgs` returned by SGLang after parsing and post-processing, before launching the server. Configuration validation does not execute checkpoint Python model code.
 
-Serving requires single-node unquantized BF16 safetensors. Chunked prefill is disabled (`--chunked-prefill-size -1`) and radix cache remains disabled. Compatible prefill/decode shapes may use CUDA Graph replay; incompatible shapes use eager execution. `max_prefill_tokens` must be at least the checkpoint's `memt.chunk_tokens`.
+Serving requires single-node unquantized BF16 safetensors. Chunked prefill (`--chunked-prefill-size -1`) and overlap are disabled by default; radix cache must remain disabled. Compatible prefill/decode shapes may use CUDA Graph replay; incompatible shapes use eager execution. `max_prefill_tokens` must be at least the checkpoint's `memt.chunk_tokens`.
 
 Nano requires DP attention to be disabled. Flash enables DP attention and requires `tp_size == dp_size`, giving attention TP1. The launcher rejects `trust_remote_code`, `--config` merging and request header overrides. Additional unsupported execution modes are listed in [validation.py](memt_sglang/validation.py).
 
@@ -116,6 +116,10 @@ Nano requires DP attention to be disabled. Flash enables DP attention and requir
 | `MEMT_EXPERIMENT_SLOT_READ` | Set to `1` to read state slots directly; defaults to `0`. |
 | `MEMT_EXPERIMENT_PREFILL_GRAPH` | Set to `1` for Nano prefill graphs with an exact token-count match; defaults to `0`. |
 | `MEMT_EXPERIMENT_DECODE_GRAPH` | Set to `1` for decode graphs; defaults to `0`. |
+| `MEMT_EXPERIMENT_PREFILL_OVERLAP` / `MEMT_EXPERIMENT_DECODE_OVERLAP` | Independently enable native phase overlap with `1`; both default to `0`. Commit boundaries synchronize. |
+| `MEMT_EXPERIMENT_QUERY_CHUNKS` | Set to `1` and supply `--chunked-prefill-size` to chunk queries; the resolved per-rank budget must be ≥2048. Defaults to `0`. Complete commits remain one forward and may exceed this query budget. |
+| `MEMT_EXPERIMENT_QUERY_COALESCE_MS` | Idle-boundary wait in ms: `0` disables it (default), otherwise `(0, 10]`. Supports Nano TP2 or Flash TP=DP=EP4/8. |
+| `MEMT_EXPERIMENT_QUERY_COALESCE_REQUESTS` / `MEMT_EXPERIMENT_QUERY_COALESCE_TOKENS` | Release when either target is reached; defaults to 4 requests / 4096 input tokens when waiting is enabled. These are release thresholds, not batch limits. |
 | `MEMT_EXPERIMENT_C4_CANONICAL_ORDER` | Optional native Flash top-k output ordering; defaults to `0`. Preserves selected membership. |
 
 For example, enable the four Nano optimizations:
@@ -127,6 +131,13 @@ sh start_memt_nano.sh /models/MemT-1.0-Nano
 ```
 
 Use `--cuda-graph-config` to select captured batch/token shapes. The experimental Flash configuration enables metadata caching, slot reads and decode graphs, with prefill graphs disabled. Its historical strict logits comparison did not pass; numerical qualification remains incomplete.
+
+Overlap and query chunking are optional experimental capabilities for community use; both default to off and neither guarantees a performance improvement. Phase overlap is independently selectable. Query chunks change native KV prefill grouping while reading the same published memory state. Complete commits are never split: defer them behind an existing prefill, or admit a whole commit exceeding the query chunk budget into an empty prefill, subject to native KV/SWA capacity checks. With Flash DP attention, SGLang divides the CLI chunk budget by DP size; `execution.query_chunk_per_rank` reports the resolved value in the server identity.
+
+```bash
+MEMT_EXPERIMENT_DECODE_OVERLAP=1 MEMT_EXPERIMENT_QUERY_CHUNKS=1 \
+sh start_memt_nano.sh /models/MemT-1.0-Nano --chunked-prefill-size 8192
+```
 
 The launcher sets internal worker variables for the model (Nano or Flash), configuration identity and snapshot storage, together with the SGLang model package path and required kernel settings. These are managed by the launcher rather than supplied as deployment options.
 

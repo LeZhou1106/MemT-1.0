@@ -10,7 +10,12 @@ from pathlib import Path
 
 from memt_sglang import SGLANG_REFERENCE_COMMIT, SGLANG_VERSION, require_sglang
 from memt_sglang._vendor.fla import __version__ as FLA_VERSION
-from memt_sglang.runtime.features import enabled, sync_graph_config
+from memt_sglang.runtime.features import (
+    enabled,
+    execution_identity,
+    overlap_phases,
+    sync_graph_config,
+)
 from memt_sglang.validation import (
     validate_model_config,
     validate_runtime_config,
@@ -19,6 +24,15 @@ from memt_sglang.validation import (
 
 
 def prepare(argv):
+    for feature in (
+        "METADATA_CACHE",
+        "SLOT_READ",
+        "PREFILL_GRAPH",
+        "DECODE_GRAPH",
+        "QUERY_CHUNKS",
+        "C4_CANONICAL_ORDER",
+    ):
+        enabled(feature)
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--model-path", required=True)
     for name in (
@@ -62,10 +76,18 @@ def prepare(argv):
         "--chunked-prefill-size",
         "-1",
         "--disable-radix-cache",
-        "--disable-overlap-schedule",
+        *([] if any(overlap_phases()) else ["--disable-overlap-schedule"]),
         "--cuda-graph-config",
-        json.dumps({phase: {"backend": "breakable" if enabled(phase.upper() + "_GRAPH")
-                            else "disabled"} for phase in ("prefill", "decode")}),
+        json.dumps(
+            {
+                phase: {
+                    "backend": "breakable"
+                    if enabled(phase.upper() + "_GRAPH")
+                    else "disabled"
+                }
+                for phase in ("prefill", "decode")
+            }
+        ),
         "--json-model-override-args",
         json.dumps({"memt_runtime": runtime}),
         *rest,
@@ -87,7 +109,13 @@ def prepare(argv):
         "memt_checkpoint_id": config.get("memt_checkpoint_id"),
         "memt_runtime": runtime,
         "fla_version": FLA_VERSION,
-        "mode": "eager",
+        "mode": "opt-in"
+        if any(
+            enabled(n)
+            for n in ("PREFILL_GRAPH", "DECODE_GRAPH", "SLOT_READ", "QUERY_CHUNKS")
+        )
+        or any(overlap_phases())
+        else "eager",
     }
     if options.deterministic_communication:
         identity["communication"] = {
@@ -208,6 +236,15 @@ def main(argv=None):
         runtime=identity["memt_runtime"],
         config_file=options.config,
         deterministic_communication=options.deterministic_communication,
+    )
+    identity["execution"] = execution_identity(args)
+    identity["mode"] = (
+        "breakable"
+        if any(
+            backend == "breakable"
+            for backend in identity["execution"]["graph_backends"].values()
+        )
+        else "eager"
     )
     identity["dependencies"] = {
         name: metadata.version(name) for name in ("sglang", "torch", "transformers")

@@ -5,6 +5,10 @@ class MemoryHooks:
     def setup_execution(self, *, dp_attention=False):
         from memt_sglang.runtime.features import enabled
 
+        if enabled("QUERY_CHUNKS"):
+            from memt_sglang.runtime.query_chunks import install_atomic_commit_guard
+
+            install_atomic_commit_guard()
         prefill, decode = enabled("PREFILL_GRAPH"), enabled("DECODE_GRAPH")
         self.graph_enabled = prefill or decode
         if not self.graph_enabled:

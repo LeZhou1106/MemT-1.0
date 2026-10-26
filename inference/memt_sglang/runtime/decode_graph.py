@@ -95,6 +95,8 @@ def install_decode_query_guard():
         success = False
         try:
             result = original_execute(self, batch, *args, **kwargs)
+            if self.model_runner.model._memory_hooks.pending:
+                raise RuntimeError("Decode graph left an unconsumed memory residual")
             success = True
             return result
         finally:
