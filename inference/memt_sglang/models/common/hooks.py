@@ -28,7 +28,7 @@ class MemoryHooks:
         if dp_attention:
             install_dp_query_consensus()
         if prefill:
-            install_prefill_query_guard(exact_tokens=not dp_attention)
+            install_prefill_query_guard()
         if decode:
             install_decode_query_guard()
         return eager_on_graph(True)

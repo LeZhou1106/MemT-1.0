@@ -12,6 +12,11 @@ from memt_sglang.runtime.state import StatePool
 from memt_sglang.runtime.worker_sessions import WorkerSessions
 
 
+def _metadata_stream(device):
+    """Partition every device metadata buffer by its actual creation stream."""
+    return torch.cuda.current_stream(device) if device.type == "cuda" else None
+
+
 class MemoryRuntime:
     def __init__(self, pool: StatePool):
         self.pool = pool
@@ -69,7 +74,7 @@ class MemoryRuntime:
     def _run_prepared(self, layer, hidden, output, compute):
         baseline_layout = not (self.metadata_cache or self.slot_read)
         for commit in (False, True):
-            key = (commit, hidden.device)
+            key = (commit, hidden.device, _metadata_stream(hidden.device))
             if not self.metadata_cache or key not in self._prepared_groups:
                 group = prepare_group(
                     self.plan,

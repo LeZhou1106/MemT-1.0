@@ -12,7 +12,7 @@ from memt_sglang.models.deepseek.ops.compiled_tensor_ops import (
     resolve_stable_qk,
 )
 from memt_sglang.models.deepseek.ops.packed import token_memory_packed
-from memt_sglang.models.deepseek.ops.read import packed_snapshot_read, snapshot_read
+from memt_sglang.models.deepseek.ops.read import packed_snapshot_read
 
 
 class _LatentNorm(nn.Module):
@@ -177,7 +177,6 @@ class DeepSeekMemoryBlock(nn.Module):
             lengths=lengths,
             commit=False,
             write_states=None,
-            use_slot_reader=True,
         )
 
     def _compute_packed(
@@ -188,7 +187,6 @@ class DeepSeekMemoryBlock(nn.Module):
         lengths,
         commit,
         write_states,
-        use_slot_reader=False,
     ):
         q, k, v, output_gate, erase, write, log_decay = self._project(hidden_states)
         query, key = self._prepare_qk(q, k, erase)
@@ -206,18 +204,7 @@ class DeepSeekMemoryBlock(nn.Module):
                 chunk_tokens=self.chunk_tokens,
             )
         else:
-            if use_slot_reader:
-                read = packed_snapshot_read(
-                    query, read_states, lengths, self.read_scale
-                )
-            else:
-                read = snapshot_read(
-                    query,
-                    read_states,
-                    lengths,
-                    self.read_scale,
-                    bf16_accumulator_output=True,
-                )
+            read = packed_snapshot_read(query, read_states, lengths, self.read_scale)
             next_state = None
         return self.o_norm(read, output_gate).reshape(
             len(hidden_states), self.value_dim
